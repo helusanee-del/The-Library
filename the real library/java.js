@@ -305,6 +305,11 @@ async function startScanner(){
     return;
   }
 
+  if(typeof jsQR === 'undefined'){
+    scanMsg('No se cargó la librería que lee códigos QR (jsQR). Revisa tu conexión a internet y recarga la página con Ctrl+F5.', true);
+    return;
+  }
+
   try{
     stopScanner();
     scanMsg('Activando cámara…');
