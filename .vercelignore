@@ -1,0 +1,3 @@
+# No publicar en el sitio: son documentación del repo, no parte de la app.
+db/
+README.md

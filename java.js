@@ -9,6 +9,10 @@ const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let books = [];
 let editingId = null;
 
+let perfil = null;          // { id, email, rol } del usuario con sesión abierta
+let loadedUserId = null;    // evita recargar todo cuando solo se renueva el token
+let authMode = 'login';     // 'login' | 'signup'
+
 let scanStream = null;
 let scanRAF = null;
 const qrSelect = document.getElementById('qrBookSelect');
@@ -53,6 +57,18 @@ function escapeHtml(s){
 function on(id, evt, fn){
   const el = document.getElementById(id);
   if(el) el.addEventListener(evt, fn);
+}
+
+function isAdmin(){
+  return !!perfil && perfil.rol === 'admin';
+}
+
+// Puerta para las acciones de escritura. La seguridad de verdad la aplica
+// Supabase con RLS; esto solo evita que el usuario choque contra un error.
+function soloAdmin(){
+  if(isAdmin()) return true;
+  alert('Solo el administrador puede modificar el catálogo.');
+  return false;
 }
 
 function toast(msg, isError){
@@ -107,6 +123,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     btn.classList.add('active');
     document.getElementById('panel-'+btn.dataset.tab).classList.add('active');
     if(btn.dataset.tab === 'qr') refreshQrSelect();
+    if(btn.dataset.tab === 'usuarios') loadUsuarios();
     if(btn.dataset.tab !== 'scan') stopScanner();
   });
 });
@@ -140,14 +157,22 @@ function renderCatalog(){
   if(list.length === 0){
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">
       <div class="big">No hay libros que coincidan</div>
-      <p>Prueba otra búsqueda o agrega un nuevo título.</p>
+      <p>${isAdmin() ? 'Prueba otra búsqueda o agrega un nuevo título.' : 'Prueba con otra búsqueda.'}</p>
     </div>`;
     renderStats();
     return;
   }
 
+  const admin = isAdmin();
+
   grid.innerHTML = list.map(b=>{
     const badgeClass = b.estado === 'Disponible' ? 'ok' : 'warn';
+    // El rol de consulta solo puede ver el QR.
+    const acciones = admin
+      ? `<button type="button" class="btn secondary small" onclick="editBook(${b.dbid})">Editar</button>
+        <button type="button" class="btn secondary small" onclick="goGenerateQr(${b.dbid})">Ver QR</button>
+        <button type="button" class="btn danger small" onclick="deleteBook(${b.dbid})">Eliminar</button>`
+      : `<button type="button" class="btn secondary small" onclick="goGenerateQr(${b.dbid})">Ver QR</button>`;
     return `
     <div class="book-card" data-id="${b.dbid}">
       <div class="top-row">
@@ -163,11 +188,7 @@ function renderCatalog(){
         <div><b>Ubicación</b> ${escapeHtml(b.ubicacion||'—')}</div>
         <div><b>Ejemplares</b> ${b.disponibles} / ${b.cantidad} <span class="badge ${badgeClass}">${escapeHtml(b.estado)}</span></div>
       </div>
-      <div class="card-actions">
-        <button type="button" class="btn secondary small" onclick="editBook(${b.dbid})">Editar</button>
-        <button type="button" class="btn secondary small" onclick="goGenerateQr(${b.dbid})">Ver QR</button>
-        <button type="button" class="btn danger small" onclick="deleteBook(${b.dbid})">Eliminar</button>
-      </div>
+      <div class="card-actions">${acciones}</div>
     </div>`;
   }).join('');
 
@@ -192,6 +213,7 @@ on('filterEstado','change', renderCatalog);
 
 /* ==================== FORM CRUD ==================== */
 on('btnNuevoLibro','click', ()=>{
+  if(!soloAdmin()) return;
   resetForm();
   document.getElementById('f_codigo').value = genCode();
   switchToTab('form');
@@ -211,6 +233,7 @@ function resetForm(){
 }
 
 function editBook(id){
+  if(!soloAdmin()) return;
   const b = books.find(x=>x.dbid===id);
   if(!b) return;
   editingId = id;
@@ -230,6 +253,7 @@ function editBook(id){
 }
 
 async function deleteBook(id){
+  if(!soloAdmin()) return;
   if(!confirm('¿Eliminar este libro del catálogo?')) return;
   const { error } = await db.from(TABLE).delete().eq('id', id);
   if(error){ toast('No se pudo eliminar: '+error.message, true); return; }
@@ -244,6 +268,7 @@ on('btnCancelForm','click', ()=>{
 
 form.addEventListener('submit', async e=>{
   e.preventDefault();
+  if(!soloAdmin()) return;
   const codigo = document.getElementById('f_codigo').value.trim();
   if(!codigo){ alert('El código es obligatorio.'); return; }
 
@@ -388,7 +413,7 @@ function handleScanResult(text){
       <p class="code-value">${escapeHtml(text)}</p>
       <p style="margin:10px 0 2px;font-family:'Fraunces',serif;font-size:1.05rem;">${escapeHtml(b.titulo)}</p>
       <p style="margin:0 0 12px;color:var(--muted);font-size:0.85rem;">${escapeHtml(b.autor)} — ${b.disponibles}/${b.cantidad} disponibles</p>
-      <button type="button" class="btn small" onclick="editBook(${b.dbid})">Abrir ficha</button>
+      ${isAdmin() ? `<button type="button" class="btn small" onclick="editBook(${b.dbid})">Abrir ficha</button>` : ''}
       <button type="button" class="btn secondary small" onclick="startScanner()">Escanear otro</button>
     `;
   }else{
@@ -397,14 +422,15 @@ function handleScanResult(text){
       <p style="margin:0 0 6px;"><b>Código no registrado</b></p>
       <p class="code-value">${escapeHtml(text)}</p>
       <p style="margin:10px 0 12px;color:var(--muted);font-size:0.85rem;">Este código QR no coincide con ningún libro del catálogo.</p>
-      <button type="button" class="btn small" id="btnCreateFromScan">Crear libro con este código</button>
+      ${isAdmin() ? `<button type="button" class="btn small" id="btnCreateFromScan">Crear libro con este código</button>` : ''}
       <button type="button" class="btn secondary small" onclick="startScanner()">Escanear otro</button>
     `;
-    document.getElementById('btnCreateFromScan').addEventListener('click', ()=>createFromScan(text));
+    on('btnCreateFromScan','click', ()=>createFromScan(text));
   }
 }
 
 function createFromScan(code){
+  if(!soloAdmin()) return;
   resetForm();
   document.getElementById('f_codigo').value = code;
   switchToTab('form');
@@ -470,6 +496,7 @@ on('excelFileInput','change', e=>{
   const input = e.target;
   const file = input.files[0];
   if(!file) return;
+  if(!soloAdmin()){ input.value = ''; return; }
   const status = document.getElementById('importStatus');
   const reader = new FileReader();
   reader.onload = async evt=>{
@@ -517,6 +544,260 @@ on('excelFileInput','change', e=>{
   reader.readAsArrayBuffer(file);
 });
 
+/* ==================== USUARIOS (solo admin) ==================== */
+let usuarios = [];
+
+async function loadUsuarios(){
+  const wrap = document.getElementById('usersWrap');
+  if(!isAdmin()){ wrap.innerHTML = ''; return; }
+
+  wrap.innerHTML = `<div class="empty-state"><div class="big">Cargando usuarios…</div></div>`;
+  // La política "perfiles: ver el propio" deja que un admin vea todas las filas.
+  const { data, error } = await db.from('perfiles')
+    .select('id,email,rol,created_at')
+    .order('created_at', {ascending:true});
+
+  if(error){
+    wrap.innerHTML = `<div class="empty-state">
+      <div class="big">No se pudo leer la lista de usuarios</div>
+      <p>${escapeHtml(error.message)}</p></div>`;
+    return;
+  }
+  usuarios = data || [];
+  renderUsuarios();
+}
+
+function renderUsuarios(){
+  const wrap = document.getElementById('usersWrap');
+  const term = document.getElementById('userSearch').value.trim().toLowerCase();
+  const list = usuarios.filter(u=> !term || String(u.email||'').toLowerCase().includes(term));
+  const admins = usuarios.filter(u=>u.rol==='admin').length;
+
+  if(list.length === 0){
+    wrap.innerHTML = `<div class="empty-state">
+      <div class="big">${usuarios.length ? 'Ningún correo coincide' : 'Todavía no hay usuarios'}</div>
+      <p>${usuarios.length ? 'Prueba con otra búsqueda.' : 'Se registran desde la pantalla de inicio de sesión.'}</p></div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+  <p class="users-count">${usuarios.length} registrado(s) · ${admins} administrador(es)</p>
+  <div class="users-scroll">
+  <table class="users-table">
+    <thead><tr><th>Correo</th><th>Rol</th><th>Registrado</th><th>Acción</th></tr></thead>
+    <tbody>
+    ${list.map(u=>{
+      const esAdmin = u.rol === 'admin';
+      const soyYo = perfil && u.id === perfil.id;
+      const fecha = u.created_at
+        ? new Date(u.created_at).toLocaleDateString('es-CO',{day:'2-digit',month:'short',year:'numeric'})
+        : '—';
+      return `<tr>
+        <td class="u-mail">${escapeHtml(u.email||'—')}${soyYo ? '<span class="u-you">tú</span>' : ''}</td>
+        <td><span class="role-badge ${esAdmin?'admin':''}">${esAdmin?'Administrador':'Consulta'}</span></td>
+        <td class="u-date">${escapeHtml(fecha)}</td>
+        <td><button type="button" class="btn ${esAdmin?'danger':''} small"
+            onclick="cambiarRol('${u.id}','${esAdmin?'usuario':'admin'}')">
+            ${esAdmin?'Quitar admin':'Hacer admin'}</button></td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table>
+  </div>`;
+}
+
+async function cambiarRol(id, nuevoRol){
+  if(!soloAdmin()) return;
+  const u = usuarios.find(x=>x.id===id);
+  if(!u) return;
+
+  // Sin ningún admin, recuperar el control exigiría volver al SQL Editor.
+  if(nuevoRol === 'usuario' && usuarios.filter(x=>x.rol==='admin').length <= 1){
+    alert('No puedes quitar el último administrador: nadie podría volver a administrar el catálogo. Asciende a otro usuario primero.');
+    return;
+  }
+
+  const soyYo = perfil && id === perfil.id;
+  const aviso = (soyYo && nuevoRol === 'usuario')
+    ? 'Vas a quitarte el rol de administrador A TI MISMO. Perderás el acceso de edición. ¿Continuar?'
+    : `¿Cambiar el rol de ${u.email} a ${nuevoRol === 'admin' ? 'administrador' : 'consulta'}?`;
+  if(!confirm(aviso)) return;
+
+  const { data, error } = await db.from('perfiles').update({rol:nuevoRol}).eq('id', id).select();
+  if(error){ alert('No se pudo cambiar el rol: ' + error.message); return; }
+  // Sin error pero sin filas: RLS dejó pasar la consulta y no actualizó nada.
+  if(!data || data.length === 0){
+    alert('La base de datos no aplicó el cambio. Comprueba que tu cuenta siga siendo administradora.');
+    await loadUsuarios();
+    return;
+  }
+
+  u.rol = nuevoRol;
+  renderUsuarios();
+
+  // Si me cambié a mí mismo, la interfaz debe reflejar el rol nuevo ya
+  if(soyYo){
+    perfil.rol = nuevoRol;
+    applyRoleUI();
+    renderCatalog();
+  }
+}
+
+on('userSearch','input', renderUsuarios);
+on('btnReloadUsers','click', loadUsuarios);
+
+/* ==================== LOGIN Y ROLES ==================== */
+const authGate   = document.getElementById('authGate');
+const appShell   = document.getElementById('appShell');
+const authForm   = document.getElementById('authForm');
+const authSubmit = document.getElementById('authSubmit');
+
+function authMsg(text, kind){
+  const box = document.getElementById('authMsg');
+  if(!text){ box.hidden = true; box.textContent = ''; return; }
+  box.hidden = false;
+  box.className = 'auth-msg ' + (kind || 'info');
+  box.textContent = text;
+}
+
+// Alterna el formulario entre "Entrar" y "Crear cuenta"
+function setAuthMode(mode){
+  authMode = mode;
+  const signup = mode === 'signup';
+  document.getElementById('authSub').textContent = signup
+    ? 'Crea tu cuenta. Entrarás con permiso de consulta hasta que un administrador cambie tu rol.'
+    : 'Inicia sesión para consultar el catálogo de la biblioteca.';
+  authSubmit.textContent = signup ? 'Crear cuenta' : 'Entrar';
+  document.getElementById('authSwitchText').textContent = signup ? '¿Ya tienes cuenta?' : '¿No tienes cuenta?';
+  document.getElementById('btnAuthSwitch').textContent = signup ? 'Entrar' : 'Crear una';
+  document.getElementById('authPass').setAttribute('autocomplete', signup ? 'new-password' : 'current-password');
+  authMsg('');
+}
+
+on('btnAuthSwitch','click', ()=> setAuthMode(authMode === 'login' ? 'signup' : 'login'));
+
+// Los mensajes de Supabase Auth llegan en inglés y muy genéricos
+function textoAuthError(err){
+  const m = String(err && err.message || '').toLowerCase();
+  if(m.includes('invalid login credentials')) return 'Correo o contraseña incorrectos.';
+  if(m.includes('email not confirmed'))       return 'Todavía no confirmaste tu correo. Abre el enlace que te envió Supabase.';
+  if(m.includes('already registered'))        return 'Ese correo ya tiene cuenta. Usa "Entrar".';
+  if(m.includes('password'))                  return 'La contraseña debe tener al menos 6 caracteres.';
+  // Supabase limita los correos de confirmación a unos pocos por hora.
+  // No es un límite de intentos: es la cuota de envío de emails.
+  if(m.includes('email rate limit') || m.includes('over_email_send_rate'))
+    return 'Supabase alcanzó su límite de correos por hora (no es tu contraseña). Desactiva "Confirm email" en Authentication → Providers → Email, o espera una hora.';
+  if(m.includes('you can only request this after'))
+    return 'Espera unos segundos antes de volver a intentarlo: Supabase limita las peticiones seguidas.';
+  if(m.includes('rate limit') || m.includes('too many'))
+    return 'Demasiadas peticiones seguidas. Espera un momento y vuelve a probar.';
+  if(m.includes('failed to fetch'))           return 'Sin conexión con Supabase. Revisa tu internet.';
+  return (err && err.message) || 'No se pudo completar la operación.';
+}
+
+authForm.addEventListener('submit', async e=>{
+  e.preventDefault();
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPass').value;
+
+  authSubmit.disabled = true;
+  authMsg(authMode === 'signup' ? 'Creando cuenta…' : 'Entrando…', 'info');
+  try{
+    if(authMode === 'signup'){
+      const { data, error } = await db.auth.signUp({ email, password });
+      if(error) throw error;
+      // Si el proyecto exige confirmar el correo, aún no hay sesión.
+      if(!data.session){
+        setAuthMode('login');
+        authMsg('Cuenta creada. Confirma tu correo y luego inicia sesión.', 'ok');
+        return;
+      }
+    }else{
+      const { error } = await db.auth.signInWithPassword({ email, password });
+      if(error) throw error;
+    }
+    document.getElementById('authPass').value = '';
+    // onAuthStateChange se encarga de abrir la aplicación.
+  }catch(err){
+    authMsg(textoAuthError(err), 'error');
+  }finally{
+    authSubmit.disabled = false;
+  }
+});
+
+on('btnLogout','click', async ()=>{
+  stopScanner();
+  await db.auth.signOut();
+});
+
+async function loadPerfil(user){
+  const { data, error } = await db.from('perfiles').select('id,email,rol').eq('id', user.id).maybeSingle();
+  if(error) console.error('No se pudo leer el perfil:', error.message);
+  // Sin fila de perfil (por ejemplo si falta el trigger) se asume el rol más
+  // restrictivo: escribir fallaría igualmente en las políticas RLS.
+  perfil = data || { id:user.id, email:user.email, rol:'usuario' };
+  if(!perfil.email) perfil.email = user.email;
+}
+
+function applyRoleUI(){
+  const admin = isAdmin();
+  document.querySelectorAll('[data-admin-only]').forEach(el=>{ el.hidden = !admin; });
+  document.getElementById('readonlyNote').hidden = admin;
+  document.getElementById('userMail').textContent = perfil.email || '';
+  const badge = document.getElementById('roleBadge');
+  badge.textContent = admin ? 'Administrador' : 'Consulta';
+  badge.classList.toggle('admin', admin);
+  // Si quedó abierta una pestaña de admin (sesión anterior, o acaba de
+  // quitarse el rol a sí mismo), devolver al catálogo.
+  if(!admin){
+    const activa = document.querySelector('.panel.active');
+    const tab = activa && activa.id.replace('panel-','');
+    const btn = tab && document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+    if(btn && btn.hasAttribute('data-admin-only')) switchToTab('catalogo');
+  }
+}
+
+function showGate(){
+  appShell.hidden = true;
+  authGate.hidden = false;
+  authGate.classList.remove('booting');
+  books = [];
+  usuarios = [];
+  perfil = null;
+  stopScanner();
+  document.getElementById('authPass').value = '';
+}
+
+async function showApp(){
+  authGate.hidden = true;
+  authGate.classList.remove('booting');
+  appShell.hidden = false;
+  applyRoleUI();
+  await loadBooks();
+}
+
+async function handleSession(session){
+  if(!session){
+    loadedUserId = null;
+    showGate();
+    return;
+  }
+  // El mismo usuario vuelve a notificar al renovarse el token: no recargues.
+  if(loadedUserId === session.user.id) return;
+  loadedUserId = session.user.id;
+  await loadPerfil(session.user);
+  await showApp();
+}
+
+// supabase-js se bloquea si se hace await de otra llamada suya dentro del
+// listener, así que el trabajo se saca del callback.
+db.auth.onAuthStateChange((_event, session)=>{
+  setTimeout(()=>handleSession(session), 0);
+});
+
 /* ==================== INIT ==================== */
 document.getElementById('dateStamp').textContent = fmtDate();
-loadBooks();
+setAuthMode('login');
+
+// Si quedó una sesión guardada en el navegador, entra directo al catálogo.
+db.auth.getSession().then(({ data })=> handleSession(data.session));

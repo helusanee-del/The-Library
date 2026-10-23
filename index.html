@@ -15,12 +15,49 @@
 </head>
 <body>
 
+<!-- ===== LOGIN / REGISTRO ===== -->
+<div class="auth-gate booting" id="authGate">
+  <div class="auth-card">
+    <h1 class="auth-title">Fichero <em>Digital</em></h1>
+    <p class="auth-sub" id="authSub">Inicia sesión para consultar el catálogo de la biblioteca.</p>
+
+    <p class="auth-boot">Comprobando sesión…</p>
+
+    <form class="auth-form" id="authForm">
+      <label for="authEmail">Correo</label>
+      <input type="email" id="authEmail" required autocomplete="email" placeholder="nombre@colegio.edu.co">
+
+      <label for="authPass">Contraseña</label>
+      <input type="password" id="authPass" required minlength="6" autocomplete="current-password" placeholder="Mínimo 6 caracteres">
+
+      <div class="auth-msg" id="authMsg" hidden></div>
+
+      <button type="submit" class="btn auth-submit" id="authSubmit">Entrar</button>
+    </form>
+
+    <p class="auth-switch">
+      <span id="authSwitchText">¿No tienes cuenta?</span>
+      <button type="button" class="link-btn" id="btnAuthSwitch">Crear una</button>
+    </p>
+  </div>
+</div>
+
+<!-- ===== APLICACIÓN (solo con sesión abierta) ===== -->
+<div id="appShell" hidden>
+
 <header class="hero">
   <div>
     <h1 class="hero-title">Fichero <em>Digital</em></h1>
     <p class="hero-sub">Gestión de biblioteca escolar: catálogo, códigos QR y respaldo en Excel — todo guardado en la nube con Supabase.</p>
   </div>
-  <div id="dateStamp" class="stamp-badge"></div>
+  <div class="hero-side">
+    <div id="dateStamp" class="stamp-badge"></div>
+    <div class="user-chip">
+      <span class="user-mail" id="userMail"></span>
+      <span class="role-badge" id="roleBadge"></span>
+      <button type="button" class="btn secondary small" id="btnLogout">Salir</button>
+    </div>
+  </div>
 </header>
 
 <div class="stats">
@@ -32,10 +69,11 @@
 
 <nav class="tabs">
   <button type="button" class="tab-btn active" data-tab="catalogo">Catálogo</button>
-  <button type="button" class="tab-btn" data-tab="form">Nuevo / Editar</button>
+  <button type="button" class="tab-btn" data-tab="form" data-admin-only>Nuevo / Editar</button>
   <button type="button" class="tab-btn" data-tab="scan">Escanear QR</button>
   <button type="button" class="tab-btn" data-tab="qr">Generar QR</button>
   <button type="button" class="tab-btn" data-tab="excel">Excel</button>
+  <button type="button" class="tab-btn" data-tab="usuarios" data-admin-only>Usuarios</button>
 </nav>
 
 <main>
@@ -43,6 +81,7 @@
 <!-- CATALOGO -->
   <section class="panel active" id="panel-catalogo">
     <h2 class="panel-title">Catálogo de la biblioteca</h2>
+    <p class="readonly-note" id="readonlyNote" hidden>Tu cuenta es de <b>consulta</b>: puedes buscar libros, ver sus códigos QR y exportar el catálogo, pero no modificarlo. Pide al administrador que cambie tu rol si necesitas editar.</p>
     <div class="toolbar">
       <input type="text" class="search-box" id="searchInput" placeholder="Buscar por título, autor o código...">
       <select id="filterEstado">
@@ -51,7 +90,7 @@
         <option value="Prestado">Prestado</option>
         <option value="En reparación">En reparación</option>
       </select>
-      <button type="button" class="btn" id="btnNuevoLibro">+ Nuevo libro</button>
+      <button type="button" class="btn" id="btnNuevoLibro" data-admin-only>+ Nuevo libro</button>
     </div>
     <div class="grid" id="catalogGrid"></div>
   </section> 
@@ -170,7 +209,7 @@
         <p>Descarga toda la información de la biblioteca en una hoja de cálculo (.xlsx) para archivarla o compartirla.</p>
         <button type="button" class="btn" id="btnExportExcel">Exportar a Excel</button>
       </div>
-      <div class="excel-card">
+      <div class="excel-card" data-admin-only>
         <h3>Importar catálogo</h3>
         <p>Carga un archivo .xlsx previamente exportado para restaurar o combinar información con el catálogo actual.</p>
         <label class="file-drop" for="excelFileInput">Haz clic para elegir un archivo .xlsx</label>
@@ -179,7 +218,20 @@
       </div>
     </div>
   </section>
+
+  <!-- USUARIOS (solo admin) -->
+  <section class="panel" id="panel-usuarios">
+    <h2 class="panel-title">Usuarios registrados</h2>
+    <div class="toolbar">
+      <input type="text" class="search-box" id="userSearch" placeholder="Buscar por correo...">
+      <button type="button" class="btn secondary" id="btnReloadUsers">Actualizar</button>
+    </div>
+    <div id="usersWrap"></div>
+  </section>
 </main>
+
+</div><!-- /appShell -->
+
 <script src="java.js"></script>
 </body>
 </html>
